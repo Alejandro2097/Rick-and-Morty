@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fullstack_postgres
+    environment:
+      POSTGRES_DB: fullstack_app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - fullstack_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fullstack_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: fullstack_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - fullstack_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  db-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fullstack_db_init
+    volumes:
+      - ./backend:/app
+      - node_modules:/app/node_modules
+    command: >
+      sh -c "
+        echo '🚀 Iniciando configuración de base de datos...' &&
+        echo '⏳ Esperando PostgreSQL...' &&
+        for i in {1..30}; do
+          if pg_isready -h postgres -U postgres -d fullstack_app; then
+            echo '✅ PostgreSQL está listo!' &&
+            break
+          fi
+          echo 'Esperando PostgreSQL... (intento $i/30)' &&
+          sleep 2
+        done &&
+        if ! pg_isready -h postgres -U postgres -d fullstack_app; then
+          echo '❌ PostgreSQL no está disponible después de 60 segundos' &&
+          exit 1
+        fi &&
+        echo '🔧 Generando cliente Prisma...' &&
+        npx prisma generate &&
+        echo '📊 Ejecutando migraciones...' &&
+        npx prisma migrate deploy &&
+        echo '🌱 Poblando base de datos...' &&
+        npx prisma db seed &&
+        echo '✅ Base de datos configurada correctamente!'
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fullstack_network
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/fullstack_app
+      - NODE_ENV=development
+      - PRISMA_CLI_BINARY_TARGETS=native
+    restart: on-failure:3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fullstack_backend
+    volumes:
+      - ./backend:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "4000:4000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - fullstack_network
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/fullstack_app
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+      - PORT=4000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+  node_modules:
+
+networks:
+  fullstack_network:
+    driver: bridge 

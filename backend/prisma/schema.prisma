@@ -1,0 +1,37 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Character {
+  id        String    @id @default(cuid())
+  name      String
+  image     String
+  species   String
+  status    String
+  gender    String
+  origin    String
+  occupation String?
+  isStarred Boolean   @default(false)
+  isDeleted Boolean   @default(false)
+  comments  Comment[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("characters")
+}
+
+model Comment {
+  id          String   @id @default(cuid())
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  characterId String
+  text        String
+  createdAt   DateTime @default(now())
+
+  @@map("comments")
+}

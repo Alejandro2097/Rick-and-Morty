@@ -1,0 +1,182 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fullstack_postgres_dev
+    environment:
+      POSTGRES_DB: fullstack_app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./backend/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - fullstack_network_dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fullstack_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: fullstack_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    networks:
+      - fullstack_network_dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db-init:
+    image: node:20-alpine
+    container_name: fullstack_db_init_dev
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - node_modules_dev:/app/node_modules
+    command: >
+      sh -c "
+        echo '🚀 Iniciando configuración de base de datos (DEV)...' &&
+        apk add --no-cache postgresql-client curl &&
+        echo '⏳ Esperando PostgreSQL...' &&
+        for i in {1..30}; do
+          if pg_isready -h postgres -U postgres -d fullstack_app; then
+            echo '✅ PostgreSQL está listo!' &&
+            break
+          fi
+          echo 'Esperando PostgreSQL... (intento $i/30)' &&
+          sleep 2
+        done &&
+        if ! pg_isready -h postgres -U postgres -d fullstack_app; then
+          echo '❌ PostgreSQL no está disponible después de 60 segundos' &&
+          exit 1
+        fi &&
+        echo '🔧 Generando cliente Prisma...' &&
+        npx prisma generate &&
+        echo '📊 Ejecutando migraciones...' &&
+        npx prisma migrate deploy &&
+        echo '🌱 Poblando base de datos...' &&
+        npx prisma db seed &&
+        echo '✅ Base de datos configurada correctamente!' &&
+        echo '📊 Verificando datos...' &&
+        ./scripts/check-db.sh &&
+        echo '🎉 ¡Base de datos lista para desarrollo!'
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fullstack_network_dev
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/fullstack_app
+      - NODE_ENV=development
+      - PRISMA_CLI_BINARY_TARGETS=native
+    restart: on-failure:3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: node:20-alpine
+    container_name: fullstack_backend_dev
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - node_modules_dev:/app/node_modules
+    command: >
+      sh -c "
+        echo '🚀 Iniciando backend (DEV)...' &&
+        npm install &&
+        echo '✅ Dependencias instaladas' &&
+        echo '🔧 Generando cliente Prisma...' &&
+        npx prisma generate &&
+        echo '🚀 Iniciando servidor de desarrollo...' &&
+        npm run dev
+      "
+    ports:
+      - "4000:4000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - fullstack_network_dev
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/fullstack_app
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+      - PORT=4000
+      - JWT_SECRET=dev-secret-key-change-in-production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prisma-studio:
+    image: node:20-alpine
+    container_name: fullstack_prisma_studio
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - node_modules_dev:/app/node_modules
+    command: >
+      sh -c "
+        echo '🎨 Iniciando Prisma Studio...' &&
+        npm install &&
+        npx prisma generate &&
+        npx prisma studio --hostname 0.0.0.0 --port 5555
+      "
+    ports:
+      - "5555:5555"
+    depends_on:
+      - postgres
+    networks:
+      - fullstack_network_dev
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/fullstack_app
+    restart: unless-stopped
+    profiles:
+      - tools
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+  node_modules_dev:
+
+networks:
+  fullstack_network_dev:
+    driver: bridge 
