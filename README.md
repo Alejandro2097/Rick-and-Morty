@@ -2,6 +2,8 @@
 
 Una aplicación fullstack moderna construida con React 18, GraphQL, Express y bases de datos relacionales para explorar personajes de Rick and Morty.
 
+![image](captura.png)
+
 ## 🚀 Stack Tecnológico
 
 ### Frontend
