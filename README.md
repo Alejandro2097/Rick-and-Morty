@@ -86,7 +86,7 @@ docker-compose logs -f
 #### Opción 3: Instalación Tradicional
 ```cmd
 # Clonar el repositorio
-git clone <repository-url>
+git clone https://github.com/Alejandro2097/Rick-and-Morty
 cd Prueba
 
 # Configurar variables de entorno
